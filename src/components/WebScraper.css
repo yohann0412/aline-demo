@@ -148,13 +148,86 @@
   font-weight: 700;
 }
 
-.export-button {
+.action-buttons {
+  display: flex;
+  gap: 12px;
+}
+
+.export-button,
+.json-button {
   background: var(--success-color);
+  color: white;
+  border: none;
+  padding: 12px 24px;
+  border-radius: 12px;
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s ease;
   min-width: 140px;
+}
+
+.json-button {
+  background: var(--primary-color);
 }
 
 .export-button:hover:not(:disabled) {
   background: #30B754;
+}
+
+.json-button:hover:not(:disabled) {
+  background: var(--secondary-color);
+}
+
+.json-view {
+  margin: 24px 32px;
+  background: var(--background-color);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.json-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  background: var(--surface-color);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.json-header h3 {
+  margin: 0;
+  font-size: 16px;
+  color: var(--text-primary);
+}
+
+.copy-button {
+  background: var(--primary-color);
+  color: white;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.copy-button:hover {
+  background: var(--secondary-color);
+}
+
+.json-content {
+  padding: 20px;
+  margin: 0;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  background: var(--background-color);
+  overflow-x: auto;
+  max-height: 400px;
+  overflow-y: auto;
 }
 
 @media (max-width: 768px) {

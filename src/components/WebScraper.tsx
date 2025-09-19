@@ -46,6 +46,17 @@ export function WebScraper() {
     }
   };
 
+  const handleViewJson = () => {
+    setShowJsonView(!showJsonView);
+  };
+
+  const handleCopyJson = () => {
+    if (data) {
+      navigator.clipboard.writeText(JSON.stringify(data, null, 2));
+      // Could add a toast notification here
+    }
+  };
+
   const isValidUrl = (input: string): boolean => {
     try {
       new URL(input.startsWith('http') ? input : `https://${input}`);
@@ -122,11 +133,30 @@ export function WebScraper() {
             </div>
             
             {data.items.length > 0 && (
-              <button onClick={handleExportCsv} className="export-button">
-                Export CSV
-              </button>
+              <div className="action-buttons">
+                <button onClick={handleExportCsv} className="export-button">
+                  Export CSV
+                </button>
+                <button onClick={handleViewJson} className="json-button">
+                  {showJsonView ? 'Hide JSON' : 'View Output JSON'}
+                </button>
+              </div>
             )}
           </div>
+
+          {showJsonView && (
+            <div className="json-view">
+              <div className="json-header">
+                <h3>Raw JSON Output</h3>
+                <button onClick={handleCopyJson} className="copy-button">
+                  Copy JSON
+                </button>
+              </div>
+              <pre className="json-content">
+                {JSON.stringify(data, null, 2)}
+              </pre>
+            </div>
+          )}
 
           <ResultsTable items={data.items} />
         </div>

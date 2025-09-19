@@ -223,12 +223,12 @@ async function extractContent(page, url) {
     .replace(/\[([^\]]+)\]\(\)/g, '$1'); // Remove empty links
   
   // Clean content with Gemini
-  const finalContent = await cleanContentWithGemini(cleanMarkdown, content.title, url);
+  const geminiResult = await cleanContentWithGemini(cleanMarkdown, content.title, url);
   
   return {
     title: content.title,
-    content: finalContent,
-    content_type: detectContentType(url, content.title, finalContent),
+    content: geminiResult.content,
+    content_type: geminiResult.contentType,
     source_url: url,
     method: 'puppeteer'
   };
@@ -265,7 +265,8 @@ Your task is to:
 4. Do NOT change, rewrite, or summarize the content - preserve it exactly as written, word for word
 5. Do NOT add any introductions, conclusions, or explanations of your own
 6. Return ONLY the cleaned main content that would be valuable to someone trying to learn from this page
-7. please remove any and all image urls, image tags, and image content etc. anything that is not text that is useful for us
+7. Please remove any and all image urls, image tags, and image content etc. anything that is not text that is useful for us
+8. Classify the content type based on what you see
 
 Title: ${title}
 URL: ${url}
@@ -273,24 +274,64 @@ URL: ${url}
 Content to clean:
 ${content}
 
-Return only the cleaned markdown content verbatim:`;
+You MUST respond in this EXACT format (use the triple backticks):
+
+\`\`\`CONTENT_TYPE
+[content_type_here]
+\`\`\`
+
+\`\`\`CLEANED_CONTENT
+[cleaned_markdown_content_here]
+\`\`\`
+
+For content_type, use EXACTLY one of these: blog, podcast_transcript, call_transcript, linkedin_post, reddit_comment, book, documentation, tutorial, product_description, other
+
+Do not deviate from this format. The content_type must be one word from the list above.`;
 
     const result = await geminiModel.generateContent(prompt);
-    const cleanedContent = result.response.text().trim();
+    const geminiResponse = result.response.text().trim();
     
-    console.log(`🤖 ✅ Gemini cleaned content: ${content.length} → ${cleanedContent.length} chars`);
+    console.log(`🤖 Gemini raw response length: ${geminiResponse.length} chars`);
     
-    // Only use Gemini result if it's substantial and shorter than original (cleaned up)
-    if (cleanedContent.length > 100 && cleanedContent.length < content.length * 1.2) {
-      return cleanedContent;
+    // Parse the structured response
+    const contentTypeMatch = geminiResponse.match(/```CONTENT_TYPE\s*\n(.*?)\n```/);
+    const cleanedContentMatch = geminiResponse.match(/```CLEANED_CONTENT\s*\n([\s\S]*?)\n```/);
+    
+    if (contentTypeMatch && cleanedContentMatch) {
+      const extractedContentType = contentTypeMatch[1].trim();
+      const extractedCleanedContent = cleanedContentMatch[1].trim();
+      
+      console.log(`🤖 ✅ Gemini extracted content type: ${extractedContentType}`);
+      console.log(`🤖 ✅ Gemini cleaned content: ${content.length} → ${extractedCleanedContent.length} chars`);
+      
+      // Only use Gemini result if it's substantial
+      if (extractedCleanedContent.length > 100) {
+        return {
+          content: extractedCleanedContent,
+          contentType: extractedContentType
+        };
+      } else {
+        console.log(`🤖 ⚠️  Gemini cleaned content too short, keeping original`);
+        return {
+          content: content,
+          contentType: 'other'
+        };
+      }
     } else {
-      console.log(`🤖 ⚠️  Gemini result doesn't look like cleaned content, keeping original`);
-      return content;
+      console.log(`🤖 ⚠️  Gemini didn't follow structured format, keeping original`);
+      console.log(`🤖 Raw response: ${geminiResponse.substring(0, 200)}...`);
+      return {
+        content: content,
+        contentType: 'other'
+      };
     }
     
   } catch (error) {
     console.log(`🤖 ❌ Gemini cleaning failed: ${error.message}`);
-    return content; // Return original if Gemini fails
+    return {
+      content: content,
+      contentType: 'other'
+    }; // Return original if Gemini fails
   }
 }
 
@@ -352,12 +393,12 @@ async function scrapeWithFirecrawl(url) {
         console.log(`🔥 Content length: ${content.length}`);
         
         // Clean content with Gemini
-        const finalContent = await cleanContentWithGemini(content.trim(), title, url);
+        const geminiResult = await cleanContentWithGemini(content.trim(), title, url);
         
         const result = {
           title: title.trim(),
-          content: finalContent,
-          content_type: detectContentType(url, title, finalContent),
+          content: geminiResult.content,
+          content_type: geminiResult.contentType,
           source_url: url,
           method: 'firecrawl'
         };
