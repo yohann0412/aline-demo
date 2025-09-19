@@ -8,10 +8,11 @@ import './WebScraper.css';
 
 export function WebScraper() {
   const [url, setUrl] = useState('');
-  const [limit, setLimit] = useState(20);
+  const [limit, setLimit] = useState(5);
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<ScrapedData | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showJsonView, setShowJsonView] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

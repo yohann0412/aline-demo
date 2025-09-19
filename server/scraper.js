@@ -2,6 +2,7 @@ import puppeteer from 'puppeteer';
 import * as cheerio from 'cheerio';
 import TurndownService from 'turndown';
 import Firecrawl from '@mendable/firecrawl-js';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
 const turndownService = new TurndownService({
   headingStyle: 'atx',
@@ -15,6 +16,10 @@ const GEMINI_API_KEY = "AIzaSyCm8wB0X4gPEgnAvsc5v4rg5BXDScVd4hc";
 const firecrawl = new Firecrawl({ 
   apiKey: FIRECRAWL_API_KEY
 });
+
+// Initialize Gemini - using free tier
+const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+const geminiModel = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
 // Enhanced URL detection patterns
 const URL_PATTERNS = [
@@ -217,10 +222,13 @@ async function extractContent(page, url) {
     .replace(/^\s+|\s+$/g, '') // Trim whitespace
     .replace(/\[([^\]]+)\]\(\)/g, '$1'); // Remove empty links
   
+  // Clean content with Gemini
+  const finalContent = await cleanContentWithGemini(cleanMarkdown, content.title, url);
+  
   return {
     title: content.title,
-    content: cleanMarkdown,
-    content_type: detectContentType(url, content.title, cleanMarkdown),
+    content: finalContent,
+    content_type: detectContentType(url, content.title, finalContent),
     source_url: url,
     method: 'puppeteer'
   };
@@ -244,6 +252,48 @@ async function findAllUrls(page, baseUrl) {
   return Array.from(validUrls);
 }
 
+async function cleanContentWithGemini(content, title, url) {
+  try {
+    console.log(`🤖 Cleaning content with Gemini for: ${url}`);
+    
+    const prompt = `You are a content extraction expert. I will provide you with scraped content from a webpage that may contain navigation, headers, footers, ads, and other irrelevant elements mixed with the main useful content.
+
+Your task is to:
+1. Extract ONLY the main useful content (articles, documentation, tutorials, product descriptions, technical content, etc.)
+2. Remove navigation menus, headers, footers, ads, subscription prompts, related links, comments sections, social media buttons
+3. Keep the content in markdown format
+4. Do NOT change, rewrite, or summarize the content - preserve it exactly as written, word for word
+5. Do NOT add any introductions, conclusions, or explanations of your own
+6. Return ONLY the cleaned main content that would be valuable to someone trying to learn from this page
+7. please remove any and all image urls, image tags, and image content etc. anything that is not text that is useful for us
+
+Title: ${title}
+URL: ${url}
+
+Content to clean:
+${content}
+
+Return only the cleaned markdown content verbatim:`;
+
+    const result = await geminiModel.generateContent(prompt);
+    const cleanedContent = result.response.text().trim();
+    
+    console.log(`🤖 ✅ Gemini cleaned content: ${content.length} → ${cleanedContent.length} chars`);
+    
+    // Only use Gemini result if it's substantial and shorter than original (cleaned up)
+    if (cleanedContent.length > 100 && cleanedContent.length < content.length * 1.2) {
+      return cleanedContent;
+    } else {
+      console.log(`🤖 ⚠️  Gemini result doesn't look like cleaned content, keeping original`);
+      return content;
+    }
+    
+  } catch (error) {
+    console.log(`🤖 ❌ Gemini cleaning failed: ${error.message}`);
+    return content; // Return original if Gemini fails
+  }
+}
+
 async function scrapeWithFirecrawl(url) {
   try {
     // Check if API key is configured
@@ -264,33 +314,50 @@ async function scrapeWithFirecrawl(url) {
     console.log(`🔥 Firecrawl response received in ${duration}ms`);
     console.log(`🔥 Full response:`, JSON.stringify(doc, null, 2));
     
-    if (doc && doc.success) {
-      console.log(`🔥 Firecrawl success flag: ${doc.success}`);
+    // Normalize Firecrawl response shape (scrape vs crawl)
+    const hasDataObject = !!doc?.data;
+    const payload = hasDataObject ? doc.data : doc;            // <-- key line
+    const { markdown, html, metadata } = payload || {};
+
+    // Check if we have usable content (either shape)
+    if (markdown || html) {
+      console.log(`🔥 Data received (success=${doc?.success}):`);
+      console.log(`  - Markdown length: ${markdown?.length || 0}`);
+      console.log(`  - HTML length: ${html?.length || 0}`);
+      console.log(`  - Metadata:`, metadata);
       
-      if (doc.data) {
-        const { markdown, html, metadata } = doc.data;
-        
-        console.log(`🔥 Data received:`);
-        console.log(`  - Markdown length: ${markdown?.length || 0}`);
-        console.log(`  - HTML length: ${html?.length || 0}`);
-        console.log(`  - Metadata:`, metadata);
-        
-        // Extract title from metadata or markdown
+      // Use markdown if available, fallback to HTML
+      let content = markdown || html || '';
+      
+      // If we got HTML instead of markdown, we might need basic conversion
+      if (!markdown && html) {
+        console.log(`🔥 Using HTML content as markdown not available`);
+        // Basic HTML to text conversion for content extraction
+        content = html
+          .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+          .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+          .replace(/<[^>]+>/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+      }
+      
+      if (content.length > 50) {
+        // Extract title from metadata or content
         const title = metadata?.title || 
                      metadata?.ogTitle || 
-                     markdown?.split('\n')[0]?.replace(/^#\s*/, '') || 
+                     content.split('\n')[0]?.replace(/^#\s*/, '').substring(0, 100) || 
                      'Untitled';
-        
-        // Use markdown content or convert HTML if needed
-        const content = markdown || '';
         
         console.log(`🔥 Extracted title: "${title}"`);
         console.log(`🔥 Content length: ${content.length}`);
         
+        // Clean content with Gemini
+        const finalContent = await cleanContentWithGemini(content.trim(), title, url);
+        
         const result = {
           title: title.trim(),
-          content: content.trim(),
-          content_type: detectContentType(url, title, content),
+          content: finalContent,
+          content_type: detectContentType(url, title, finalContent),
           source_url: url,
           method: 'firecrawl'
         };
@@ -298,11 +365,12 @@ async function scrapeWithFirecrawl(url) {
         console.log(`🔥 ✅ Successfully processed ${url} with Firecrawl`);
         return result;
       } else {
-        console.log(`🔥 ❌ Firecrawl success=true but no data field for ${url}`);
+        console.log(`🔥 ❌ Firecrawl content too short (${content.length} chars)`);
         return null;
       }
     } else {
-      console.log(`🔥 ❌ Firecrawl returned success=false for ${url}`);
+      console.log(`🔥 ❌ Firecrawl returned no usable data for ${url}`);
+      console.log(`🔥 Success flag: ${String(doc?.success)}`);
       console.log(`🔥 Error details:`, doc?.error || 'No error details provided');
       return null;
     }
@@ -343,10 +411,10 @@ export async function scrapeWebsite(inputUrl, options = {}) {
     let mainContent = null;
     try {
       console.log(`🤖 Trying Puppeteer for main page: ${baseUrl}...`);
-      await page.goto(baseUrl, { 
-        waitUntil: 'networkidle0',
-        timeout: 30000 
-      });
+    await page.goto(baseUrl, { 
+      waitUntil: 'networkidle0',
+      timeout: 30000 
+    });
       mainContent = await extractContent(page, baseUrl);
       console.log(`🤖 ✅ Puppeteer succeeded for main page`);
       
@@ -369,7 +437,7 @@ export async function scrapeWebsite(inputUrl, options = {}) {
     }
     
     if (mainContent && mainContent.content.length > 200) {
-      results.push(mainContent);
+    results.push(mainContent);
       console.log(`✅ Main page successfully scraped using ${mainContent.method.toUpperCase()} (${mainContent.content.length} chars)`);
     } else if (mainContent) {
       console.log(`⚠️  Main page content too short using ${mainContent.method} (${mainContent.content.length} chars)`);
@@ -381,10 +449,10 @@ export async function scrapeWebsite(inputUrl, options = {}) {
     // Find all potential content URLs (only if Puppeteer worked for main page)
     let contentUrls = [];
     if (mainContent && mainContent.method === 'puppeteer') {
-      console.log('Finding content URLs...');
+    console.log('Finding content URLs...');
       try {
         contentUrls = await findAllUrls(page, baseUrl);
-        console.log(`Found ${contentUrls.length} potential content URLs`);
+    console.log(`Found ${contentUrls.length} potential content URLs`);
       } catch (error) {
         console.log(`Failed to find URLs: ${error.message}`);
       }
