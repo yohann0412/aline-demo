@@ -10,8 +10,9 @@ const turndownService = new TurndownService({
 });
 
 // Initialize Firecrawl - you'll need to set your API key in environment variables
+const FIRECRAWL_API_KEY = "fc-6358fd45eed74a08942d277344debaa9";
 const firecrawl = new Firecrawl({ 
-  apiKey:  "fc-6358fd45eed74a08942d277344debaa9" 
+  apiKey: FIRECRAWL_API_KEY
 });
 
 // Enhanced URL detection patterns
@@ -245,13 +246,13 @@ async function findAllUrls(page, baseUrl) {
 async function scrapeWithFirecrawl(url) {
   try {
     // Check if API key is configured
-    if (!process.env.FIRECRAWL_API_KEY || process.env.FIRECRAWL_API_KEY === "fc-YOUR-API-KEY") {
+    if (!FIRECRAWL_API_KEY || FIRECRAWL_API_KEY === "fc-YOUR-API-KEY") {
       console.log(`⚠️  Firecrawl API key not configured, skipping ${url}`);
       return null;
     }
     
     console.log(`🔥 Attempting Firecrawl scrape for: ${url}`);
-    console.log(`🔥 Using API key: ${process.env.FIRECRAWL_API_KEY?.substring(0, 8)}...`);
+    console.log(`🔥 Using API key: ${FIRECRAWL_API_KEY?.substring(0, 8)}...`);
     
     const startTime = Date.now();
     const doc = await firecrawl.scrape(url, { 
