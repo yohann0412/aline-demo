@@ -67,3 +67,9 @@ export default defineConfig([
   },
 ]);
 ```
+
+
+Questions I am concerned about:
+
+to what level do we filter content OUT from blogs - is pricing info / promotion within the blog
+good or bad to have? will the LLM get influenced by seeing pricing and 'subconsciously' worsen the personalization by trying to commercialize it?

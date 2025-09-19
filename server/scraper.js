@@ -1,11 +1,17 @@
 import puppeteer from 'puppeteer';
 import * as cheerio from 'cheerio';
 import TurndownService from 'turndown';
+import Firecrawl from '@mendable/firecrawl-js';
 
 const turndownService = new TurndownService({
   headingStyle: 'atx',
   bulletListMarker: '-',
   codeBlockStyle: 'fenced'
+});
+
+// Initialize Firecrawl - you'll need to set your API key in environment variables
+const firecrawl = new Firecrawl({ 
+  apiKey:  "fc-6358fd45eed74a08942d277344debaa9" 
 });
 
 // Enhanced URL detection patterns
@@ -213,7 +219,8 @@ async function extractContent(page, url) {
     title: content.title,
     content: cleanMarkdown,
     content_type: detectContentType(url, content.title, cleanMarkdown),
-    source_url: url
+    source_url: url,
+    method: 'puppeteer'
   };
 }
 
@@ -235,7 +242,81 @@ async function findAllUrls(page, baseUrl) {
   return Array.from(validUrls);
 }
 
-export async function scrapeWebsite(inputUrl) {
+async function scrapeWithFirecrawl(url) {
+  try {
+    // Check if API key is configured
+    if (!process.env.FIRECRAWL_API_KEY || process.env.FIRECRAWL_API_KEY === "fc-YOUR-API-KEY") {
+      console.log(`⚠️  Firecrawl API key not configured, skipping ${url}`);
+      return null;
+    }
+    
+    console.log(`🔥 Attempting Firecrawl scrape for: ${url}`);
+    console.log(`🔥 Using API key: ${process.env.FIRECRAWL_API_KEY?.substring(0, 8)}...`);
+    
+    const startTime = Date.now();
+    const doc = await firecrawl.scrape(url, { 
+      formats: ['markdown', 'html'] 
+    });
+    const duration = Date.now() - startTime;
+    
+    console.log(`🔥 Firecrawl response received in ${duration}ms`);
+    console.log(`🔥 Full response:`, JSON.stringify(doc, null, 2));
+    
+    if (doc && doc.success) {
+      console.log(`🔥 Firecrawl success flag: ${doc.success}`);
+      
+      if (doc.data) {
+        const { markdown, html, metadata } = doc.data;
+        
+        console.log(`🔥 Data received:`);
+        console.log(`  - Markdown length: ${markdown?.length || 0}`);
+        console.log(`  - HTML length: ${html?.length || 0}`);
+        console.log(`  - Metadata:`, metadata);
+        
+        // Extract title from metadata or markdown
+        const title = metadata?.title || 
+                     metadata?.ogTitle || 
+                     markdown?.split('\n')[0]?.replace(/^#\s*/, '') || 
+                     'Untitled';
+        
+        // Use markdown content or convert HTML if needed
+        const content = markdown || '';
+        
+        console.log(`🔥 Extracted title: "${title}"`);
+        console.log(`🔥 Content length: ${content.length}`);
+        
+        const result = {
+          title: title.trim(),
+          content: content.trim(),
+          content_type: detectContentType(url, title, content),
+          source_url: url,
+          method: 'firecrawl'
+        };
+        
+        console.log(`🔥 ✅ Successfully processed ${url} with Firecrawl`);
+        return result;
+      } else {
+        console.log(`🔥 ❌ Firecrawl success=true but no data field for ${url}`);
+        return null;
+      }
+    } else {
+      console.log(`🔥 ❌ Firecrawl returned success=false for ${url}`);
+      console.log(`🔥 Error details:`, doc?.error || 'No error details provided');
+      return null;
+    }
+    
+  } catch (error) {
+    console.log(`🔥 ❌ Firecrawl exception for ${url}:`);
+    console.log(`  - Error name: ${error.name}`);
+    console.log(`  - Error message: ${error.message}`);
+    console.log(`  - Error stack: ${error.stack}`);
+    console.log(`  - Full error object:`, JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
+    return null;
+  }
+}
+
+export async function scrapeWebsite(inputUrl, options = {}) {
+  const { limit = 5 } = options; // Default limit to 5 as requested
   let browser;
   const results = [];
   const processed = new Set();
@@ -255,58 +336,82 @@ export async function scrapeWebsite(inputUrl) {
     await page.setViewport({ width: 1920, height: 1080 });
     
     console.log(`Navigating to: ${baseUrl}`);
-    await page.goto(baseUrl, { 
-      waitUntil: 'networkidle0',
-      timeout: 30000 
-    });
     
-    // Extract content from main page
-    const mainContent = await extractContent(page, baseUrl);
-    results.push(mainContent);
+    // Try to scrape main page with Puppeteer first
+    let mainContent = null;
+    try {
+      await page.goto(baseUrl, { 
+        waitUntil: 'networkidle0',
+        timeout: 30000 
+      });
+      mainContent = await extractContent(page, baseUrl);
+    } catch (error) {
+      console.log(`Puppeteer failed for main page: ${error.message}, trying Firecrawl...`);
+      mainContent = await scrapeWithFirecrawl(baseUrl);
+    }
+    
+    if (mainContent && mainContent.content.length > 200) {
+      results.push(mainContent);
+    }
     processed.add(baseUrl);
     
-    // Find all potential content URLs
-    console.log('Finding content URLs...');
-    const contentUrls = await findAllUrls(page, baseUrl);
-    console.log(`Found ${contentUrls.length} potential content URLs`);
+    // Find all potential content URLs (only if Puppeteer worked for main page)
+    let contentUrls = [];
+    if (mainContent && mainContent.method === 'puppeteer') {
+      console.log('Finding content URLs...');
+      try {
+        contentUrls = await findAllUrls(page, baseUrl);
+        console.log(`Found ${contentUrls.length} potential content URLs`);
+      } catch (error) {
+        console.log(`Failed to find URLs: ${error.message}`);
+      }
+    }
     
-    // Limit to prevent overwhelming servers
-    const maxUrls = Math.min(contentUrls.length, 50);
+    // Limit URLs to process
+    const maxUrls = Math.min(contentUrls.length, limit);
+    console.log(`Processing ${maxUrls} URLs (limit: ${limit})`);
     
+    // Process each URL sequentially as requested
     for (let i = 0; i < maxUrls; i++) {
       const url = contentUrls[i];
       
       if (processed.has(url)) continue;
       processed.add(url);
       
+      console.log(`Scraping ${i + 1}/${maxUrls}: ${url}`);
+      
+      let content = null;
+      
+      // Try Puppeteer first
       try {
-        console.log(`Scraping ${i + 1}/${maxUrls}: ${url}`);
         await page.goto(url, { 
           waitUntil: 'networkidle0',
           timeout: 20000 
         });
-        
-        const content = await extractContent(page, url);
-        
-        // Only include if we got substantial content
-        if (content.content.length > 200) {
-          results.push(content);
-        }
-        
-        // Small delay to be respectful
-        await page.waitForTimeout(500);
-        
+        content = await extractContent(page, url);
       } catch (error) {
-        console.log(`Failed to scrape ${url}: ${error.message}`);
-        continue;
+        console.log(`Puppeteer failed for ${url}: ${error.message}, trying Firecrawl...`);
+        // Fallback to Firecrawl
+        content = await scrapeWithFirecrawl(url);
       }
+      
+      // Only include if we got content (reduced minimum length)
+      if (content && content.content.length > 50) {
+        results.push(content);
+        console.log(`✅ Successfully scraped ${url} (${content.method}, ${content.content.length} chars)`);
+      } else if (content) {
+        console.log(`⚠️  Content too short for ${url} (${content.content.length} chars)`);
+      } else {
+        console.log(`❌ Failed to scrape ${url} with both methods`);
+      }
+      
+      // Small delay to be respectful (sequential processing)
+      await new Promise(resolve => setTimeout(resolve, 1000));
     }
     
     return {
       site: baseUrl,
-      items: results,
-      total_found: contentUrls.length,
-      total_scraped: results.length
+      items: results
     };
     
   } catch (error) {
