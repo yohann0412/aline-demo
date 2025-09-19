@@ -8,6 +8,7 @@ import './WebScraper.css';
 
 export function WebScraper() {
   const [url, setUrl] = useState('');
+  const [limit, setLimit] = useState(20);
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<ScrapedData | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -26,7 +27,8 @@ export function WebScraper() {
 
     try {
       const response = await axios.post('http://localhost:3001/api/scrape', {
-        url: url.trim()
+        url: url.trim(),
+        limit: limit
       });
 
       setData(response.data);
@@ -67,6 +69,16 @@ export function WebScraper() {
             onChange={(e) => setUrl(e.target.value)}
             placeholder="Enter website URL (e.g., interviewing.io/blog)"
             className={`url-input ${error ? 'error' : ''}`}
+            disabled={loading}
+          />
+          <input
+            type="number"
+            value={limit}
+            onChange={(e) => setLimit(parseInt(e.target.value) || 20)}
+            placeholder="Max URLs"
+            className="limit-input"
+            min="1"
+            max="100"
             disabled={loading}
           />
           <button 

@@ -11,6 +11,7 @@ const turndownService = new TurndownService({
 
 // Initialize Firecrawl - you'll need to set your API key in environment variables
 const FIRECRAWL_API_KEY = "fc-6358fd45eed74a08942d277344debaa9";
+const GEMINI_API_KEY = "AIzaSyCm8wB0X4gPEgnAvsc5v4rg5BXDScVd4hc";
 const firecrawl = new Firecrawl({ 
   apiKey: FIRECRAWL_API_KEY
 });
@@ -317,7 +318,7 @@ async function scrapeWithFirecrawl(url) {
 }
 
 export async function scrapeWebsite(inputUrl, options = {}) {
-  const { limit = 5 } = options; // Default limit to 5 as requested
+  const { limit = 20 } = options; // Default limit to 5 as requested
   let browser;
   const results = [];
   const processed = new Set();
@@ -341,18 +342,39 @@ export async function scrapeWebsite(inputUrl, options = {}) {
     // Try to scrape main page with Puppeteer first
     let mainContent = null;
     try {
+      console.log(`🤖 Trying Puppeteer for main page: ${baseUrl}...`);
       await page.goto(baseUrl, { 
         waitUntil: 'networkidle0',
         timeout: 30000 
       });
       mainContent = await extractContent(page, baseUrl);
+      console.log(`🤖 ✅ Puppeteer succeeded for main page`);
+      
+      // Check if content is too short, try Firecrawl if so
+      if (mainContent && mainContent.content.length < 200) {
+        console.log(`🤖 ⚠️  Main page Puppeteer content too short (${mainContent.content.length} chars), trying Firecrawl...`);
+        const firecrawlContent = await scrapeWithFirecrawl(baseUrl);
+        if (firecrawlContent && firecrawlContent.content.length > mainContent.content.length) {
+          console.log(`🔄 ✅ Firecrawl provided better content for main page (${firecrawlContent.content.length} vs ${mainContent.content.length} chars)`);
+          mainContent = firecrawlContent;
+        } else {
+          console.log(`🔄 ⚠️  Firecrawl didn't improve main page content, keeping Puppeteer result`);
+        }
+      }
+      
     } catch (error) {
-      console.log(`Puppeteer failed for main page: ${error.message}, trying Firecrawl...`);
+      console.log(`🤖 ❌ Puppeteer failed for main page: ${error.message}`);
+      console.log(`🔄 Switching to Firecrawl fallback for main page...`);
       mainContent = await scrapeWithFirecrawl(baseUrl);
     }
     
     if (mainContent && mainContent.content.length > 200) {
       results.push(mainContent);
+      console.log(`✅ Main page successfully scraped using ${mainContent.method.toUpperCase()} (${mainContent.content.length} chars)`);
+    } else if (mainContent) {
+      console.log(`⚠️  Main page content too short using ${mainContent.method} (${mainContent.content.length} chars)`);
+    } else {
+      console.log(`❌ Failed to scrape main page with both Puppeteer and Firecrawl`);
     }
     processed.add(baseUrl);
     
@@ -385,13 +407,29 @@ export async function scrapeWebsite(inputUrl, options = {}) {
       
       // Try Puppeteer first
       try {
+        console.log(`🤖 Trying Puppeteer for ${url}...`);
         await page.goto(url, { 
           waitUntil: 'networkidle0',
           timeout: 20000 
         });
         content = await extractContent(page, url);
+        console.log(`🤖 ✅ Puppeteer succeeded for ${url}`);
+        
+        // Check if content is too short, try Firecrawl if so
+        if (content && content.content.length < 200) {
+          console.log(`🤖 ⚠️  Puppeteer content too short (${content.content.length} chars), trying Firecrawl...`);
+          const firecrawlContent = await scrapeWithFirecrawl(url);
+          if (firecrawlContent && firecrawlContent.content.length > content.content.length) {
+            console.log(`🔄 ✅ Firecrawl provided better content (${firecrawlContent.content.length} vs ${content.content.length} chars)`);
+            content = firecrawlContent;
+          } else {
+            console.log(`🔄 ⚠️  Firecrawl didn't improve content, keeping Puppeteer result`);
+          }
+        }
+        
       } catch (error) {
-        console.log(`Puppeteer failed for ${url}: ${error.message}, trying Firecrawl...`);
+        console.log(`🤖 ❌ Puppeteer failed for ${url}: ${error.message}`);
+        console.log(`🔄 Switching to Firecrawl fallback...`);
         // Fallback to Firecrawl
         content = await scrapeWithFirecrawl(url);
       }
@@ -399,11 +437,11 @@ export async function scrapeWebsite(inputUrl, options = {}) {
       // Only include if we got content (reduced minimum length)
       if (content && content.content.length > 50) {
         results.push(content);
-        console.log(`✅ Successfully scraped ${url} (${content.method}, ${content.content.length} chars)`);
+        console.log(`✅ Successfully scraped ${url} using ${content.method.toUpperCase()} (${content.content.length} chars)`);
       } else if (content) {
-        console.log(`⚠️  Content too short for ${url} (${content.content.length} chars)`);
+        console.log(`⚠️  Content too short for ${url} using ${content.method} (${content.content.length} chars)`);
       } else {
-        console.log(`❌ Failed to scrape ${url} with both methods`);
+        console.log(`❌ Failed to scrape ${url} with both Puppeteer and Firecrawl`);
       }
       
       // Small delay to be respectful (sequential processing)
